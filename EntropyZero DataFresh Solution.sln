@@ -2,15 +2,15 @@ Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio 14
 VisualStudioVersion = 14.0.25123.0
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DataFresh", "DataFresh\DataFresh.csproj", "{05438358-2120-4D97-974E-ACF80F7EA6F7}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DataFresh", "Source\DataFresh\DataFresh.csproj", "{05438358-2120-4D97-974E-ACF80F7EA6F7}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TestHarnessExample", "TestHarnessExample\TestHarnessExample.csproj", "{D688D8F0-3CDE-4C39-BF81-ED8C210C8F8E}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TestHarnessExample", "Source\TestHarnessExample\TestHarnessExample.csproj", "{D688D8F0-3CDE-4C39-BF81-ED8C210C8F8E}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Testing.DataFresh", "Testing.DataFresh\Testing.DataFresh.csproj", "{3E910EED-904F-4A52-A611-9278B682EFD3}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Testing.DataFresh", "Source\Testing.DataFresh\Testing.DataFresh.csproj", "{3E910EED-904F-4A52-A611-9278B682EFD3}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DataFreshUtil", "DataFreshUtil\DataFreshUtil.csproj", "{D1044AB1-AB58-42E3-A37B-4099116982A5}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DataFreshUtil", "Source\DataFreshUtil\DataFreshUtil.csproj", "{D1044AB1-AB58-42E3-A37B-4099116982A5}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DataFresh.Common", "DataFresh.Common\DataFresh.Common.csproj", "{0BAA8852-1597-43BB-AF78-BABA707D4D86}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DataFresh.Common", "Source\DataFresh.Common\DataFresh.Common.csproj", "{0BAA8852-1597-43BB-AF78-BABA707D4D86}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
