@@ -1,5 +1,7 @@
 bin
 obj
+Output
+/[Pp]ackages/*
 _ReSharper*
 *.user
 *.suo
