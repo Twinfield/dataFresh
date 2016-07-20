@@ -2,3 +2,6 @@
 	path = Source
 	url = git@github.com:Twinfield/New-DataFresh.git
 	branch = XMen-PAA-1361
+[submodule "Build"]
+	path = Build
+	url = git@github.com:Twinfield/Build.git
