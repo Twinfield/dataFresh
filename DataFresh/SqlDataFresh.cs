@@ -17,8 +17,10 @@
 // 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA 
 
 using System;
+using System.Collections.Generic;
 using System.Data.SqlClient;
 using System.IO;
+using System.Linq;
 using System.Text;
 
 namespace DataFresh
@@ -122,8 +124,31 @@ namespace DataFresh
 			{
 				throw new SqlDataFreshException("DataFresh procedure not found. Please prepare the database.");
 			}
-			ExecuteNonQuery(string.Format("exec {0} '{1}'", RefreshProcedureName, SnapshotPath.FullName));
+
+			ExecuteNonQuery(string.Format("exec {0} '{1}'", RefreshProcedureName, GetSnapshotPathForRestore()));
 			ConsoleWrite("RefreshTheDatabase Complete : " + (DateTime.Now - before));
+		}
+
+		string GetSnapshotPathForRestore()
+		{
+			var snapshotDirPath = Environment.GetEnvironmentVariable("TwinfieldInContainerDatabasesPath");
+			if (string.IsNullOrEmpty(snapshotDirPath))
+				return SnapshotPath.FullName;
+
+			var dbName = GetCurrentDatabaseName();
+			if (!snapshotDirPath.EndsWith("/"))
+				snapshotDirPath += "/";
+			return $"{snapshotDirPath}Snapshot_{dbName}/";
+		}
+
+		string GetSnapshotPathForBackup()
+		{
+			var snapshotDirPath = Environment.GetEnvironmentVariable("TwinfieldOnHostDatabasesPath");
+			if (string.IsNullOrEmpty(snapshotDirPath))
+				return SnapshotPath.FullName;
+
+			var dbName = GetCurrentDatabaseName();
+			return Path.Combine(snapshotDirPath, $"Snapshot_{dbName}\\");
 		}
 
 		/// <summary>
@@ -137,8 +162,28 @@ namespace DataFresh
 			{
 				throw new SqlDataFreshException("DataFresh procedure not found. Please prepare the database.");
 			}
-			ExecuteNonQuery(string.Format("exec {0} '{1}'", ImportProcedureName, SnapshotPath.FullName));
+			ExecuteNonQuery(string.Format("exec {0} '{1}'", ImportProcedureName, GetSnapshotPathForRestore()));
 			ConsoleWrite("RefreshTheEntireDatabase Complete : " + (DateTime.Now - before));
+		}
+
+		void ExecuteCmd(string command)
+		{
+			var process = new System.Diagnostics.Process();
+			var startInfo = new System.Diagnostics.ProcessStartInfo
+			{
+				WindowStyle = System.Diagnostics.ProcessWindowStyle.Hidden,
+				FileName = "cmd.exe",
+				Arguments = "/C " + command
+			};
+			process.StartInfo = startInfo;
+			process.Start();
+		}
+
+		sealed class TableMetadata
+		{
+			public string Database { get; set; }
+			public string Schema { get; set; }
+			public string Name { get; set; }
 		}
 
 		/// <summary>
@@ -152,7 +197,65 @@ namespace DataFresh
 			{
 				throw new SqlDataFreshException("DataFresh procedure not found. Please prepare the database.");
 			}
-			ExecuteNonQuery(string.Format("exec {0} '{1}'", ExtractProcedureName, SnapshotPath.FullName));
+
+			var sql = "SELECT DB_NAME(), TABLE_SCHEMA, TABLE_NAME FROM Information_Schema.tables WHERE table_type = 'BASE TABLE'";
+			var tables = new List<TableMetadata>();
+			using (var conn = new SqlConnection(connectionString))
+			{
+				sql = sql + " --dataProfilerIgnore";
+				var cmd = new SqlCommand(sql, conn) { CommandTimeout = 1200 };
+				conn.Open();
+				using (var reader = cmd.ExecuteReader())
+				{
+					while (reader.Read())
+					{
+						tables.Add(new TableMetadata
+						{
+							Database = reader.GetString(0),
+							Schema = reader.GetString(1),
+							Name = reader.GetString(2)
+						});
+					}
+				}
+			}
+
+			var snapshotPathForBackup = GetSnapshotPathForBackup();
+			Directory.CreateDirectory(snapshotPathForBackup);
+			var connectionBuilder = new SqlConnectionStringBuilder(connectionString);
+			var commandBuilder = new StringBuilder();
+
+			const int batchSize = 20;
+			for (var i = 0; i < tables.Count; i += batchSize)
+			{
+				var batch = tables.Skip(i).Take(batchSize);
+				foreach (var table in batch)
+				{
+					commandBuilder.Append("bcp \"[");
+					commandBuilder.Append(table.Database);
+					commandBuilder.Append("].[");
+					commandBuilder.Append(table.Schema);
+					commandBuilder.Append("].[");
+					commandBuilder.Append(table.Name);
+					commandBuilder.Append("]\"");
+					commandBuilder.Append(" out \"");
+					commandBuilder.Append(snapshotPathForBackup);
+					commandBuilder.Append(table.Schema);
+					commandBuilder.Append('.');
+					commandBuilder.Append(table.Name);
+					commandBuilder.Append(".df\" -n -k -E -C 1252 -S \"");
+					commandBuilder.Append(connectionBuilder.DataSource);
+					commandBuilder.Append("\" -U \"");
+					commandBuilder.Append(connectionBuilder.UserID);
+					commandBuilder.Append("\" -P \"");
+					commandBuilder.Append(connectionBuilder.Password);
+					commandBuilder.Append("\"");
+					commandBuilder.Append(" && ");
+				}
+				commandBuilder.Append("REM");
+				ExecuteCmd(commandBuilder.ToString());
+				commandBuilder.Clear();
+			}
+
 			ConsoleWrite("CreateSnapshot Complete : " + (DateTime.Now - before));
 		}
 
@@ -181,7 +284,7 @@ namespace DataFresh
 			{
 				if (snapshotPath == null)
 				{
-					return GetSnapshopPath();
+					return GetSnapshotPath();
 				}
 				return snapshotPath;
 			}
@@ -234,10 +337,15 @@ namespace DataFresh
 			}
 		}
 
-		private DirectoryInfo GetSnapshopPath()
+		string GetCurrentDatabaseName()
 		{
-			string dbName = (string) ExecuteScalar("SELECT DB_Name()");
-			string mdfFilePath = Path.GetDirectoryName(ExecuteScalar("select filename from sysfiles where filename like '%.MDF%'").ToString().Trim());
+			return (string)ExecuteScalar("SELECT DB_Name()");
+		}
+
+		DirectoryInfo GetSnapshotPath()
+		{
+			var dbName = GetCurrentDatabaseName();
+			var mdfFilePath = Path.GetDirectoryName(ExecuteScalar("select filename from sysfiles where filename like '%.MDF%'").ToString().Trim());
 			return new DirectoryInfo(string.Format(@"{0}\Snapshot_{1}\", mdfFilePath, dbName));
 		}
 
