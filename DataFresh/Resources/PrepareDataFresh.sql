@@ -10,10 +10,6 @@ IF EXISTS (SELECT * FROM [DBO].SYSOBJECTS WHERE ID = Object_ID(N'[DBO].[df_Chang
      DROP PROCEDURE [dbo].[df_ChangeTrackingTriggerRemove]
 GO
 
-IF EXISTS (SELECT * FROM [DBO].SYSOBJECTS WHERE ID = Object_ID(N'[DBO].[df_TableDataExtract]') AND OBJECTPROPERTY(ID, N'IsProcedure') = 1)
-	DROP PROCEDURE [dbo].[df_TableDataExtract]
-GO 
-
 IF EXISTS (SELECT * FROM [DBO].SYSOBJECTS WHERE ID = Object_ID(N'[DBO].[df_TableDataImport]') AND OBJECTPROPERTY(ID, N'IsProcedure') = 1)
      DROP PROCEDURE [dbo].[df_TableDataImport]
 GO 
@@ -155,36 +151,6 @@ AS
 	CLOSE Table_Cursor
 	DEALLOCATE Table_Cursor
 
-GO
-
-CREATE PROCEDURE dbo.[df_TableDataExtract]
-(
-	@BasePath NVARCHAR(512)
-)
-AS
-
-	DECLARE @MkDirCmd NVARCHAR(4000)
-	
-	SET @MkDirCmd = N'MKDIR "' + @BASEPATH + '"'
-		EXEC master.dbo.xp_cmdshell @MkDirCmd, no_output
-	
-	DECLARE @CMD NVARCHAR(4000)
-	
-	DECLARE Table_Cursor CURSOR FOR
-		SELECT N'bcp "' + DB_NAME() + '.[' + Table_Schema + '].[' + Table_Name + ']" out "' + @BasePath + Table_Schema + '.' + Table_Name + '.df" -n -k -E -C 1252 -S ' + @@ServerName + ' -T' FROM Information_Schema.tables WHERE table_type = 'BASE TABLE'
-
-	OPEN Table_Cursor
-	FETCH NEXT FROM Table_Cursor INTO @CMD
-
-	WHILE (@@Fetch_Status = 0)
-	BEGIN
-		EXEC master.dbo.xp_cmdshell @CMD, no_output
-		FETCH NEXT FROM Table_Cursor INTO @CMD
-	END
-
-	CLOSE Table_Cursor
-	Deallocate Table_Cursor
-	
 GO
 
 CREATE PROCEDURE dbo.[df_TableDataImport]

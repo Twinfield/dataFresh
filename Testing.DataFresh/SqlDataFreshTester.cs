@@ -42,7 +42,6 @@ namespace Testing.DataFresh
 
 			dataFresh.RemoveDataFreshFromDatabase();
 			Assert.IsFalse(dataFresh.TableExists(dataFresh.ChangeTrackingTableName));
-			Assert.IsFalse(dataFresh.ProcedureExists(dataFresh.ExtractProcedureName));
 			Assert.IsFalse(dataFresh.ProcedureExists(dataFresh.ImportProcedureName));
 			Assert.IsFalse(dataFresh.ProcedureExists(dataFresh.PrepareProcedureName));
 			Assert.IsFalse(dataFresh.ProcedureExists(dataFresh.RefreshProcedureName));
@@ -55,14 +54,12 @@ namespace Testing.DataFresh
 
 			dataFresh.RemoveDataFreshFromDatabase();
 			Assert.IsFalse(dataFresh.TableExists(dataFresh.ChangeTrackingTableName));
-			Assert.IsFalse(dataFresh.ProcedureExists(dataFresh.ExtractProcedureName));
 			Assert.IsFalse(dataFresh.ProcedureExists(dataFresh.ImportProcedureName));
 			Assert.IsFalse(dataFresh.ProcedureExists(dataFresh.PrepareProcedureName));
 			Assert.IsFalse(dataFresh.ProcedureExists(dataFresh.RefreshProcedureName));
 
 			dataFresh.PrepareDatabaseforDataFresh();
 			Assert.IsTrue(dataFresh.TableExists(dataFresh.ChangeTrackingTableName));
-			Assert.IsTrue(dataFresh.ProcedureExists(dataFresh.ExtractProcedureName));
 			Assert.IsTrue(dataFresh.ProcedureExists(dataFresh.ImportProcedureName));
 			Assert.IsTrue(dataFresh.ProcedureExists(dataFresh.PrepareProcedureName));
 			Assert.IsTrue(dataFresh.ProcedureExists(dataFresh.RefreshProcedureName));

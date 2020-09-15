@@ -42,7 +42,6 @@ namespace DataFresh
 
 		public string PrepareProcedureName = "df_ChangeTrackingTriggerCreate";
 		public string RefreshProcedureName = "df_ChangedTableDataRefresh";
-		public string ExtractProcedureName = "df_TableDataExtract";
 		public string ImportProcedureName = "df_TableDataImport";
 		public string ChangeTrackingTableName = "df_ChangeTracking";
 
@@ -177,6 +176,7 @@ namespace DataFresh
 			};
 			process.StartInfo = startInfo;
 			process.Start();
+			process.WaitForExit();
 		}
 
 		sealed class TableMetadata
@@ -191,9 +191,9 @@ namespace DataFresh
 		/// </summary>
 		public void CreateSnapshot()
 		{
-			DateTime before = DateTime.Now;
+			var before = DateTime.Now;
 			ConsoleWrite("CreateSnapshot Started");
-			if (!ProcedureExists(ExtractProcedureName))
+			if (!ProcedureExists(RefreshProcedureName))
 			{
 				throw new SqlDataFreshException("DataFresh procedure not found. Please prepare the database.");
 			}
@@ -230,9 +230,9 @@ namespace DataFresh
 				var batch = tables.Skip(i).Take(batchSize);
 				foreach (var table in batch)
 				{
-					commandBuilder.Append("bcp \"[");
+					commandBuilder.Append("bcp \"");
 					commandBuilder.Append(table.Database);
-					commandBuilder.Append("].[");
+					commandBuilder.Append(".[");
 					commandBuilder.Append(table.Schema);
 					commandBuilder.Append("].[");
 					commandBuilder.Append(table.Name);
@@ -242,13 +242,9 @@ namespace DataFresh
 					commandBuilder.Append(table.Schema);
 					commandBuilder.Append('.');
 					commandBuilder.Append(table.Name);
-					commandBuilder.Append(".df\" -n -k -E -C 1252 -S \"");
+					commandBuilder.Append(".df\" -n -k -E -C 1252 -S ");
 					commandBuilder.Append(connectionBuilder.DataSource);
-					commandBuilder.Append("\" -U \"");
-					commandBuilder.Append(connectionBuilder.UserID);
-					commandBuilder.Append("\" -P \"");
-					commandBuilder.Append(connectionBuilder.Password);
-					commandBuilder.Append("\"");
+					commandBuilder.Append(" -T");
 					commandBuilder.Append(" && ");
 				}
 				commandBuilder.Append("REM");
