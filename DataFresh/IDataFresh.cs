@@ -54,12 +54,8 @@ namespace DataFresh
 		void CreateSnapshot();
 
 		/// <summary>
-		/// location on the server where the snapshot files are located
+		/// location on the client where the snapshot files are located
 		/// </summary>
-		DirectoryInfo SnapshotPath
-		{
-			get; 
-			set;
-		}
+		string SnapshotRootPath { get; set; }
 	}
 }

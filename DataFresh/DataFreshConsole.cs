@@ -64,20 +64,17 @@ namespace DataFresh
 
 			SqlDataFresh dataFresh = new SqlDataFresh(connectionString, true);
 
-			string snapshotPath = this.arguments["sp"];
+			string snapshotRootPath = this.arguments["sp"];
 
-			if (snapshotPath != null)
+			if (snapshotRootPath != null)
 			{
-				snapshotPath = snapshotPath.Replace("\"", "");
-				if (!snapshotPath.EndsWith(@"\"))
-				{
-					snapshotPath += @"\";
-				}
+				snapshotRootPath = snapshotRootPath.Replace("\"", "");
+				if (!snapshotRootPath.EndsWith(@"\")) snapshotRootPath += @"\";
 
-				ConsoleWrite("snapshotPath = {0}", snapshotPath);
-				string fullPath = Path.GetFullPath(snapshotPath);
+				ConsoleWrite("snapshotRootPath = {0}", snapshotRootPath);
+				var fullPath = Path.GetFullPath(snapshotRootPath);
 				ConsoleWrite("fullPath = {0}", fullPath);
-				dataFresh.SnapshotPath = new DirectoryInfo(snapshotPath);
+				dataFresh.SnapshotRootPath = snapshotRootPath;
 			}
 
 			string command = this.arguments["c"].ToUpper();

@@ -1,7 +1,3 @@
-IF EXISTS (SELECT * FROM [DBO].SYSOBJECTS WHERE ID = Object_ID(N'[DBO].[df_ChangedTableDataRefresh]') AND OBJECTPROPERTY(ID, N'IsProcedure') = 1)
-     DROP PROCEDURE [dbo].[df_ChangedTableDataRefresh]
-GO 
-
 IF EXISTS (SELECT * FROM [DBO].SYSOBJECTS WHERE ID = Object_ID(N'[DBO].[df_ChangeTrackingTriggerCreate]') AND OBJECTPROPERTY(ID, N'IsProcedure') = 1)
      DROP PROCEDURE [dbo].[df_ChangeTrackingTriggerCreate]
 GO
@@ -9,10 +5,6 @@ GO
 IF EXISTS (SELECT * FROM [DBO].SYSOBJECTS WHERE ID = Object_ID(N'[DBO].[df_ChangeTrackingTriggerRemove]') AND OBJECTPROPERTY(ID, N'IsProcedure') = 1)
      DROP PROCEDURE [dbo].[df_ChangeTrackingTriggerRemove]
 GO
-
-IF EXISTS (SELECT * FROM [DBO].SYSOBJECTS WHERE ID = Object_ID(N'[DBO].[df_TableDataImport]') AND OBJECTPROPERTY(ID, N'IsProcedure') = 1)
-     DROP PROCEDURE [dbo].[df_TableDataImport]
-GO 
 
 IF EXISTS (SELECT * FROM dbo.sysobjects WHERE id = object_id(N'[dbo].[df_ChangeTracking]') and OBJECTPROPERTY(id, N'IsUserTable') = 1)
 	DROP TABLE [dbo].[df_ChangeTracking]
@@ -25,92 +17,6 @@ CREATE TABLE [dbo].[df_ChangeTracking]
 	)
 GO
 	
-CREATE PROCEDURE dbo.[df_ChangedTableDataRefresh]
-(
-	@BasePath NVARCHAR(512)
-)
-AS
-
-	DECLARE @sql NVARCHAR(4000)	
-	DECLARE @TableSchema VARCHAR(255)
-	DECLARE @TableName VARCHAR(255)
-
-	SELECT DISTINCT TableSchema, TableName INTO #ChangedTables FROM df_ChangeTracking
-
-	TRUNCATE TABLE df_ChangeTracking
-
-	DECLARE Table_Cursor INSENSITIVE SCROLL CURSOR FOR
-		SELECT [tableschema], [tablename] from #ChangedTables
-		UNION
-		SELECT DISTINCT
-				OBJECT_SCHEMA_NAME(fkeyid) AS Referenced_Table_Schema,
-				OBJECT_NAME(fkeyid) AS Referenced_Table_Name
-		FROM 
-			sysreferences sr
-			INNER JOIN #ChangedTables ct ON sr.rkeyid = OBJECT_ID(ct.tablename)
-
-	OPEN Table_Cursor
-
-	-- Deactivate Constrains for tables referencing changed tables
-	FETCH NEXT FROM Table_Cursor INTO @TableSchema, @TableName
-
-	WHILE (@@Fetch_Status = 0)
-	BEGIN
-			SET @sql = N'Alter Table [' + @TableSchema + '].[' + @TableName + '] NOCHECK CONSTRAINT ALL'
-			EXEC sp_executesql @sql
-
-			FETCH NEXT FROM Table_Cursor INTO @TableSchema, @TableName
-	END
-
-	-- Delete All data from Changed Tables and Refill
-	DECLARE ChangedTable_Cursor CURSOR FOR
-		SELECT [tableschema], [tablename] FROM #ChangedTables WHERE tablename not in('df_ChangeTracking', 'dr_DeltaVersion')
-
-	OPEN ChangedTable_Cursor
-	FETCH NEXT FROM ChangedTable_Cursor INTO @TableSchema, @TableName
-	WHILE (@@Fetch_Status = 0)
-	BEGIN
-			PRINT @TableName
-			SET @sql = N'DELETE [' + @TableSchema + '].[' + @TableName + ']; DELETE FROM df_ChangeTracking WHERE TableName=''' + @TableName + ''' and TableSchema=''' + @TableSchema + ''''
-			EXEC sp_executesql @sql
-			
-			SET @sql = N'IF(SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE table_schema = ''' + @TableSchema + ''' AND table_name = ''' + @TableName + ''' AND IDENT_SEED(TABLE_NAME) IS NOT NULL) > 0
-			BEGIN				
-				DBCC CHECKIDENT ([' + @TableSchema + '.' + @TableName + '], RESEED, 0)
-			END'
-
-			EXEC sp_executesql @sql
-	
-
-			SET @sql = N'BULK INSERT [' + @TableSchema + '].[' + @TableName + ']
-				FROM ''' + @BasePath + @TableSchema + '.' + @TableName + '.df''
-   				WITH 
-					(
-						KEEPIDENTITY,
-						KEEPNULLS,
-						DATAFILETYPE=''native''
-					)'
-			EXEC sp_executesql @sql
-
-			FETCH NEXT FROM ChangedTable_Cursor INTO @TableSchema, @TableName
-	END
-	CLOSE ChangedTable_Cursor
-	DEALLOCATE ChangedTable_Cursor
-
-	-- ReEnable Constrants for All Tables
-	FETCH FIRST FROM Table_Cursor INTO @TableSchema, @TableName
-	WHILE (@@Fetch_Status = 0)
-	BEGIN
-			SET @sql = N'Alter Table [' + @TableSchema + '].[' + @TableName + '] CHECK CONSTRAINT ALL'
-			EXEC sp_executesql @sql
-
-			FETCH NEXT FROM Table_Cursor INTO @TableSchema, @TableName
-	END
-	CLOSE Table_Cursor
-	DEALLOCATE Table_Cursor
-GO
-
-
 CREATE PROCEDURE dbo.[df_ChangeTrackingTriggerCreate]
 AS
 
@@ -148,78 +54,6 @@ AS
 			FETCH NEXT FROM Table_Cursor INTO @TableSchema, @TableName
 
 	END
-	CLOSE Table_Cursor
-	DEALLOCATE Table_Cursor
-
-GO
-
-CREATE PROCEDURE dbo.[df_TableDataImport]
-(
-	@BasePath NVARCHAR(512)
-)
-AS
-
-	DECLARE @sql NVARCHAR(4000)
-	DECLARE @TableSchema VARCHAR(255)
-	DECLARE @TableName VARCHAR(255)	
-
-	SELECT Table_Schema as TableSchema, Table_Name as TableName INTO #UserTables FROM Information_Schema.tables WHERE table_type = 'BASE TABLE'
-
-	DECLARE Table_Cursor INSENSITIVE SCROLL CURSOR FOR
-		SELECT [tableschema], [tablename] FROM #UserTables
-
-	OPEN Table_Cursor
-
-	-- Deactivate Constrains for tables referencing changed tables
-	FETCH NEXT FROM Table_Cursor INTO @TableSchema, @TableName
-
-	WHILE (@@Fetch_Status = 0)
-	BEGIN
-			SET @sql = N'Alter Table [' + @TableSchema + '].[' + @TableName + '] NOCHECK CONSTRAINT ALL'
-			EXEC sp_executesql @sql
-
-			FETCH NEXT FROM Table_Cursor INTO @TableSchema, @TableName
-	END
-
-	-- Delete All data from Changed Tables and Refill
-	DECLARE UserTable_Cursor CURSOR FOR
-		SELECT [tableschema], [tablename] FROM #UserTables WHERE tablename not in ('df_ChangeTracking', 'dr_DeltaVersion')
-
-	OPEN UserTable_Cursor
-
-	FETCH NEXT FROM UserTable_Cursor INTO @TableSchema, @TableName
-	WHILE (@@Fetch_Status = 0)
-	BEGIN
-			PRINT @TableSchema + '.' + @TableName
-			SET @sql = N'DELETE [' + @TableSchema + '].[' + @TableName + ']'
-			EXEC sp_executesql @sql
-
-			SET @sql = N'BULK INSERT [' + @TableSchema + '].[' + @TableName + ']
-				FROM ''' + @BasePath + @TableName + '.df''
-   				WITH 
-					(
-						KEEPIDENTITY,
-						KEEPNULLS,
-						DATAFILETYPE=''native''
-					)'
-			EXEC sp_executesql @sql
-
-			FETCH NEXT FROM UserTable_Cursor INTO @TableSchema, @TableName
-
-	END
-	CLOSE UserTable_Cursor
-	DEALLOCATE UserTable_Cursor
-
-	-- ReEnable Constrants for All Tables
-	FETCH FIRST FROM Table_Cursor INTO @TableSchema, @TableName
-	WHILE (@@Fetch_Status = 0)
-	BEGIN
-			SET @sql = N'Alter Table [' + @TableSchema + '].[' + @TableName + '] CHECK CONSTRAINT ALL'
-			EXEC sp_executesql @sql
-			
-			FETCH NEXT FROM Table_Cursor INTO @TableSchema, @TableName
-	END
-
 	CLOSE Table_Cursor
 	DEALLOCATE Table_Cursor
 

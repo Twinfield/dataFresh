@@ -42,9 +42,7 @@ namespace Testing.DataFresh
 
 			dataFresh.RemoveDataFreshFromDatabase();
 			Assert.IsFalse(dataFresh.TableExists(dataFresh.ChangeTrackingTableName));
-			Assert.IsFalse(dataFresh.ProcedureExists(dataFresh.ImportProcedureName));
 			Assert.IsFalse(dataFresh.ProcedureExists(dataFresh.PrepareProcedureName));
-			Assert.IsFalse(dataFresh.ProcedureExists(dataFresh.RefreshProcedureName));
 		}
 		
 		[Test]
@@ -54,25 +52,21 @@ namespace Testing.DataFresh
 
 			dataFresh.RemoveDataFreshFromDatabase();
 			Assert.IsFalse(dataFresh.TableExists(dataFresh.ChangeTrackingTableName));
-			Assert.IsFalse(dataFresh.ProcedureExists(dataFresh.ImportProcedureName));
 			Assert.IsFalse(dataFresh.ProcedureExists(dataFresh.PrepareProcedureName));
-			Assert.IsFalse(dataFresh.ProcedureExists(dataFresh.RefreshProcedureName));
 
 			dataFresh.PrepareDatabaseforDataFresh();
 			Assert.IsTrue(dataFresh.TableExists(dataFresh.ChangeTrackingTableName));
-			Assert.IsTrue(dataFresh.ProcedureExists(dataFresh.ImportProcedureName));
 			Assert.IsTrue(dataFresh.ProcedureExists(dataFresh.PrepareProcedureName));
-			Assert.IsTrue(dataFresh.ProcedureExists(dataFresh.RefreshProcedureName));
 		}
 
 		[Test]
 		public void SnapshopPath_ManualOverride()
 		{
 			SqlDataFresh dataFresh = new SqlDataFresh(connectionString);
-			DirectoryInfo tempPath = new DirectoryInfo(Path.GetTempPath());
+			var tempPath = Path.GetTempPath();
 			dataFresh.SnapshotPath = tempPath;
-			Console.Out.WriteLine("dataFresh.SnapshotPath.FullName = {0}", dataFresh.SnapshotPath.FullName);
-			Assert.AreEqual(tempPath.FullName, dataFresh.SnapshotPath.FullName);
+			Console.Out.WriteLine("dataFresh.SnapshotPath.FullName = {0}", dataFresh.SnapshotPath);
+			Assert.AreEqual(tempPath, dataFresh.SnapshotPath);
 		}
 
 		[Test]
@@ -80,8 +74,8 @@ namespace Testing.DataFresh
 		{
 			SqlDataFresh dataFresh = new SqlDataFresh(connectionString);
 			string tempPath = @"c:\temp\folder";
-			dataFresh.SnapshotPath = new DirectoryInfo(tempPath);
-			Assert.AreEqual(@"c:\temp\folder\", dataFresh.SnapshotPath.FullName);
+			dataFresh.SnapshotPath = tempPath;
+			Assert.AreEqual(@"c:\temp\folder\", dataFresh.SnapshotPath);
 		}
 
 		[Test]
@@ -89,14 +83,14 @@ namespace Testing.DataFresh
 		{
 			SqlDataFresh dataFresh = new SqlDataFresh(connectionString);
 			dataFresh.SnapshotPath = null;
-			Assert.IsTrue(dataFresh.SnapshotPath.FullName.IndexOf("Snapshot_DataFreshSample") > -1);
+			Assert.IsTrue(dataFresh.SnapshotPath.IndexOf("Snapshot_DataFreshSample") > -1);
 		}
 
 		[Test]
 		public void SnapshopPath()
 		{
 			SqlDataFresh dataFresh = new SqlDataFresh(connectionString);
-			Assert.IsTrue(dataFresh.SnapshotPath.FullName.IndexOf("Snapshot_DataFreshSample") > -1);
+			Assert.IsTrue(dataFresh.SnapshotPath.IndexOf("Snapshot_DataFreshSample") > -1);
 		}
 
 		[Test]
