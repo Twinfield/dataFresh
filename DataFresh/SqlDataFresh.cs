@@ -63,13 +63,15 @@ namespace DataFresh
 
 		public bool TableExists(string tableName)
 		{
-			int tableCount = Int32.Parse(ExecuteScalar(string.Format("SELECT COUNT(TABLE_NAME) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME='{0}'", tableName)).ToString());
+			int tableCount = Int32.Parse(ExecuteScalar(
+				$"SELECT COUNT(TABLE_NAME) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME='{tableName}'").ToString());
 			return (tableCount > 0);
 		}
 
 		public bool ProcedureExists(string procedureName)
 		{
-			int procedureCount = Int32.Parse(ExecuteScalar(string.Format("SELECT COUNT(ROUTINE_NAME) FROM INFORMATION_SCHEMA.ROUTINES WHERE ROUTINE_NAME='{0}'", procedureName)).ToString());
+			int procedureCount = Int32.Parse(ExecuteScalar(
+				$"SELECT COUNT(ROUTINE_NAME) FROM INFORMATION_SCHEMA.ROUTINES WHERE ROUTINE_NAME='{procedureName}'").ToString());
 			return (procedureCount > 0);
 		}
 
@@ -122,7 +124,7 @@ namespace DataFresh
 			{
 				throw new SqlDataFreshException("DataFresh procedure not found. Please prepare the database.");
 			}
-			ExecuteNonQuery(string.Format("exec {0} '{1}'", RefreshProcedureName, SnapshotPath.FullName));
+			ExecuteNonQuery($"exec {RefreshProcedureName}");
 			ConsoleWrite("RefreshTheDatabase Complete : " + (DateTime.Now - before));
 		}
 
@@ -137,7 +139,7 @@ namespace DataFresh
 			{
 				throw new SqlDataFreshException("DataFresh procedure not found. Please prepare the database.");
 			}
-			ExecuteNonQuery(string.Format("exec {0} '{1}'", ImportProcedureName, SnapshotPath.FullName));
+			ExecuteNonQuery($"exec {ImportProcedureName}");
 			ConsoleWrite("RefreshTheEntireDatabase Complete : " + (DateTime.Now - before));
 		}
 
@@ -152,7 +154,7 @@ namespace DataFresh
 			{
 				throw new SqlDataFreshException("DataFresh procedure not found. Please prepare the database.");
 			}
-			ExecuteNonQuery(string.Format("exec {0} '{1}'", ExtractProcedureName, SnapshotPath.FullName));
+			ExecuteNonQuery($"exec {ExtractProcedureName}");
 			ConsoleWrite("CreateSnapshot Complete : " + (DateTime.Now - before));
 		}
 
@@ -238,7 +240,7 @@ namespace DataFresh
 		{
 			string dbName = (string) ExecuteScalar("SELECT DB_Name()");
 			string mdfFilePath = Path.GetDirectoryName(ExecuteScalar("select filename from sysfiles where filename like '%.MDF%'").ToString().Trim());
-			return new DirectoryInfo(string.Format(@"{0}\Snapshot_{1}\", mdfFilePath, dbName));
+			return new DirectoryInfo($@"{mdfFilePath}\Snapshot_{dbName}\");
 		}
 
 		private void RunSqlScript(StreamReader reader)
