@@ -22,16 +22,41 @@ IF EXISTS (SELECT * FROM dbo.sysobjects WHERE id = object_id(N'[dbo].[df_ChangeT
 	DROP TABLE [dbo].[df_ChangeTracking]
 GO
 
+IF EXISTS (SELECT * FROM dbo.sysobjects WHERE id = object_id(N'[dbo].[df_DeleteDataInChunks]') and OBJECTPROPERTY(id, N'IsProcedure') = 1)
+	DROP TABLE [dbo].[df_DeleteDataInChunks]
+GO
+
+
 CREATE TABLE [dbo].[df_ChangeTracking]
 	(
 		[TABLESCHEMA] sysname,
 		[TABLENAME] sysname
 	)
 GO
+
+CREATE PROCEDURE dbo.[df_DeleteDataInChunks]
+	@TableSchema VARCHAR(255),
+	@TableName VARCHAR(255)
+AS
+	DECLARE @sql NVARCHAR(4000)
+
+	SET @sql = N'
+		DECLARE @DeleteChunk INT = 500
+		DECLARE @rowcount INT = 1
+
+		WHILE @rowcount > 0
+		BEGIN
+			DELETE TOP (@DeleteChunk) FROM [' + @TableSchema + '].[' + @TableName +'] WITH(ROWLOCK)
+			SET @rowcount = @@RowCount
+		END'
+	
+	EXEC sp_executesql @sql
+GO
+
 	
 CREATE PROCEDURE dbo.[df_ChangedTableDataRefresh]
 AS
-	DECLARE @sql NVARCHAR(4000)	
+	DECLARE @sql NVARCHAR(4000)
 	DECLARE @columnNameList NVARCHAR(4000)
 	DECLARE @TableSchema VARCHAR(255)
 	DECLARE @TableName VARCHAR(255)
@@ -73,7 +98,9 @@ AS
 	FETCH NEXT FROM ChangedTable_Cursor INTO @TableSchema, @TableName
 	WHILE (@@Fetch_Status = 0)
 	BEGIN
-			SET @sql = N'DELETE [' + @TableSchema + '].[' + @TableName + ']; DELETE FROM df_ChangeTracking WHERE TableName=''' + @TableName + ''' and TableSchema=''' + @TableSchema + ''''
+			EXEC [dbo].[df_DeleteDataInChunks] @TableSchema, @TableName
+
+			SET @sql = N'DELETE FROM df_ChangeTracking WHERE TableName=''' + @TableName + ''' and TableSchema=''' + @TableSchema + ''''
 			EXEC sp_executesql @sql
 			
 			SET @sql = N'IF(SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE table_schema = ''' + @TableSchema + ''' AND table_name = ''' + @TableName + ''' AND IDENT_SEED(TABLE_NAME) IS NOT NULL) > 0
@@ -244,15 +271,15 @@ AS
 					),1,1,'');
 			PRINT @columnNameList
 
+			EXEC [dbo].[df_DeleteDataInChunks] @TableSchema, @TableName
+
 			IF (@columnNameList IS NULL) 
 				SET @sql = 
-					N'DELETE [' + @TableSchema + '].[' + @TableName + '];
-					INSERT INTO [' + @TableSchema + '].[' + @TableName + ']
+					N'INSERT INTO [' + @TableSchema + '].[' + @TableName + ']
 						SELECT * FROM [' + @TableSchema + '].[' + @TableName + '__backup];'
 			ELSE
 				SET @sql = 
 					N'SET IDENTITY_INSERT [' + @TableSchema + '].[' + @TableName + '] ON;
-					DELETE [' + @TableSchema + '].[' + @TableName + '];
 					INSERT INTO [' + @TableSchema + '].[' + @TableName + '](' + @columnNameList + ')
 						SELECT * FROM [' + @TableSchema + '].[' + @TableName + '__backup];
 					SET IDENTITY_INSERT [' + @TableSchema + '].[' + @TableName + '] OFF;'
