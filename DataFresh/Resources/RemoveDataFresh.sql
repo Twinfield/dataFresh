@@ -25,3 +25,11 @@ GO
 IF EXISTS (SELECT * FROM [DBO].SYSOBJECTS WHERE ID = Object_ID(N'[DBO].[df_ChangeTracking]') AND OBJECTPROPERTY(ID, N'IsTable') = 1)
      DROP TABLE [dbo].[df_ChangeTracking]
 GO 
+
+IF EXISTS (SELECT * FROM dbo.sysobjects WHERE id = object_id(N'[dbo].[df_ChangeTrackingColumns]') and OBJECTPROPERTY(id, N'IsUserTable') = 1)
+	DROP TABLE [dbo].[df_ChangeTrackingColumns]
+GO
+
+IF EXISTS (SELECT * FROM dbo.sysobjects WHERE id = object_id(N'[dbo].[df_DeleteDataInChunks]') and OBJECTPROPERTY(id, N'IsProcedure') = 1)
+	DROP PROCEDURE [dbo].[df_DeleteDataInChunks]
+GO

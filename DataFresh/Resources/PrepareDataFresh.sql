@@ -22,8 +22,12 @@ IF EXISTS (SELECT * FROM dbo.sysobjects WHERE id = object_id(N'[dbo].[df_ChangeT
 	DROP TABLE [dbo].[df_ChangeTracking]
 GO
 
+IF EXISTS (SELECT * FROM dbo.sysobjects WHERE id = object_id(N'[dbo].[df_ChangeTrackingColumns]') and OBJECTPROPERTY(id, N'IsUserTable') = 1)
+	DROP TABLE [dbo].[df_ChangeTrackingColumns]
+GO
+
 IF EXISTS (SELECT * FROM dbo.sysobjects WHERE id = object_id(N'[dbo].[df_DeleteDataInChunks]') and OBJECTPROPERTY(id, N'IsProcedure') = 1)
-	DROP TABLE [dbo].[df_DeleteDataInChunks]
+	DROP PROCEDURE [dbo].[df_DeleteDataInChunks]
 GO
 
 
@@ -31,6 +35,14 @@ CREATE TABLE [dbo].[df_ChangeTracking]
 	(
 		[TABLESCHEMA] sysname,
 		[TABLENAME] sysname
+	)
+GO
+
+CREATE TABLE [dbo].[df_ChangeTrackingColumns]
+	(
+		[TABLESCHEMA] sysname,
+		[TABLENAME] sysname,
+		[COLUMNS] VARCHAR(4000)
 	)
 GO
 
@@ -60,6 +72,7 @@ AS
 	DECLARE @columnNameList NVARCHAR(4000)
 	DECLARE @TableSchema VARCHAR(255)
 	DECLARE @TableName VARCHAR(255)
+	DECLARE @ObjectId INT
 
 	SELECT DISTINCT TableSchema, TableName INTO #ChangedTables FROM df_ChangeTracking
 
@@ -91,7 +104,7 @@ AS
 	-- Delete All data from Changed Tables and Refill
 	DECLARE ChangedTable_Cursor CURSOR FOR
 		SELECT [tableschema], [tablename] FROM #ChangedTables
-		WHERE tablename NOT IN ('df_ChangeTracking', 'dr_DeltaVersion')
+		WHERE tablename NOT IN ('df_ChangeTracking', 'df_ChangeTrackingColumns', 'dr_DeltaVersion')
 			AND tablename NOT LIKE '%__backup'
 
 	OPEN ChangedTable_Cursor
@@ -107,16 +120,11 @@ AS
 			BEGIN
 				DBCC CHECKIDENT ([' + @TableSchema + '.' + @TableName + '], RESEED, 0)
 			END'
-
 			EXEC sp_executesql @sql
 	
-			SET @columnNameList = STUFF((select ',[' + a.name + ']'
-				from sys.all_columns a
-				join sys.tables t on a.object_id = t.object_id 
-				where t.object_id = object_id('[' + @TableSchema + '].[' + @TableName + ']')
-					and EXISTS (SELECT 1 FROM sys.identity_columns WHERE object_id = t.object_id)
-				for xml path ('')
-				),1,1,'');
+			SELECT TOP 1 @columnNameList = [Columns]
+			FROM dbo.df_ChangeTrackingColumns
+			WHERE TableSchema = @TableSchema and TableName = @TableName
 
 			IF (@columnNameList IS NULL) 
 				SET @sql = N'INSERT INTO [' + @TableSchema + '].[' + @TableName + ']
@@ -150,11 +158,11 @@ CREATE PROCEDURE dbo.[df_ChangeTrackingTriggerCreate]
 AS
 
 	IF NOT EXISTS (SELECT * FROM dbo.sysobjects WHERE id = object_id(N'[dbo].[df_ChangeTracking]') and OBJECTPROPERTY(id, N'IsUserTable') = 1)
-	CREATE TABLE [df_ChangeTracking]
-	(
-		[TABLESCHEMA] sysname,
-		[TABLENAME] sysname
-	)
+		CREATE TABLE [df_ChangeTracking]
+		(
+			[TABLESCHEMA] sysname,
+			[TABLENAME] sysname
+		)
 
 	DECLARE @sql NVARCHAR(4000)
 	DECLARE @TableSchema VARCHAR(255)
@@ -164,7 +172,7 @@ AS
 		SELECT [table_schema], [table_name]
 		FROM information_schema.tables
 		WHERE table_type = 'BASE TABLE'
-			and [table_name] NOT IN ('df_ChangeTracking', 'dr_DeltaVersion')
+			and [table_name] NOT IN ('df_ChangeTracking', 'df_ChangeTrackingColumns', 'dr_DeltaVersion')
 			and [table_name] NOT LIKE '%__backup'
 
 	OPEN Table_Cursor
@@ -180,7 +188,7 @@ AS
 			as
 			SET NOCOUNT ON
 			INSERT INTO df_ChangeTracking (tableschema, tablename) VALUES (''' + @TableSchema + ''', ''' + @TableName + ''')
-			SET NOCOUNT OFF' 
+			SET NOCOUNT OFF'
 			
 			EXEC sp_executesql @sql
 
@@ -194,25 +202,45 @@ GO
 
 CREATE PROCEDURE dbo.[df_TableDataExtract]
 AS
-	DECLARE @CMD NVARCHAR(4000)
+	DECLARE @sql NVARCHAR(4000)
+	DECLARE @columnNameList NVARCHAR(4000)
+	DECLARE @TableSchema VARCHAR(255)
+	DECLARE @TableName VARCHAR(255)    
 	
+    DELETE FROM df_ChangeTrackingColumns
+
 	DECLARE Table_Cursor CURSOR FOR
-		SELECT N'IF OBJECT_ID(''' + Table_Schema + '.' + Table_Name + '__backup'', ''U'') IS NOT NULL
-			DROP TABLE [' + Table_Schema + '].[' + Table_Name + '__backup];
-			SELECT * INTO [' + Table_Schema + '].[' + Table_Name + '__backup]
-				FROM [' + Table_Schema + '].[' + Table_Name + ']'
+		SELECT Table_Schema as TableSchema, Table_Name as TableName
 		FROM Information_Schema.tables
 		WHERE table_type = 'BASE TABLE'
-			AND [table_name] NOT IN ('df_ChangeTracking', 'dr_DeltaVersion')
+			AND [table_name] NOT IN ('df_ChangeTracking', 'df_ChangeTrackingColumns', 'dr_DeltaVersion')
 			AND [table_name] NOT LIKE '%__backup'
 
 	OPEN Table_Cursor
-	FETCH NEXT FROM Table_Cursor INTO @CMD
+
+	FETCH NEXT FROM Table_Cursor INTO @TableSchema, @TableName
 
 	WHILE (@@Fetch_Status = 0)
 	BEGIN
-		EXEC sp_executesql @CMD
-		FETCH NEXT FROM Table_Cursor INTO @CMD
+		SET @sql = N'IF OBJECT_ID(''' + @TableSchema + '.' + @TableName + '__backup'', ''U'') IS NOT NULL
+			DROP TABLE [' + @TableSchema + '].[' + @TableName + '__backup];
+			SELECT * INTO [' + @TableSchema + '].[' + @TableName + '__backup]
+				FROM [' + @TableSchema + '].[' + @TableName + ']'
+		EXEC sp_executesql @sql
+
+		SET @columnNameList = STUFF((select ',[' + a.name + ']'
+				from sys.all_columns a
+				join sys.tables t on a.object_id = t.object_id 
+				where t.object_id = object_id('[' + @TableSchema + '].[' + @TableName + ']')
+					and EXISTS (SELECT 1 FROM sys.identity_columns WHERE object_id = t.object_id)
+				for xml path ('')
+				),1,1,'');
+
+        PRINT @TableSchema + ' ' + @TableName + ' ' + @columnNameList
+		INSERT INTO [dbo].df_ChangeTrackingColumns ([TABLESCHEMA], [TABLENAME], [COLUMNS])
+		VALUES (@TableSchema, @TableName, @columnNameList)
+
+		FETCH NEXT FROM Table_Cursor INTO @TableSchema, @TableName
 	END
 
 	CLOSE Table_Cursor
@@ -222,7 +250,6 @@ GO
 
 CREATE PROCEDURE dbo.[df_TableDataImport]
 AS
-
 	DECLARE @sql NVARCHAR(4000)
 	DECLARE @columnNameList nvarchar(MAX)
 	DECLARE @TableSchema VARCHAR(255)
@@ -231,7 +258,7 @@ AS
 	SELECT Table_Schema as TableSchema, Table_Name as TableName INTO #UserTables
 		FROM Information_Schema.tables
 		WHERE table_type = 'BASE TABLE'
-			AND [table_name] NOT IN ('df_ChangeTracking', 'dr_DeltaVersion')
+			AND [table_name] NOT IN ('df_ChangeTracking', 'df_ChangeTrackingColumns', 'dr_DeltaVersion')
 			AND [table_name] NOT LIKE '%__backup'
 
 	DECLARE Table_Cursor INSENSITIVE SCROLL CURSOR FOR
@@ -254,7 +281,7 @@ AS
 	DECLARE UserTable_Cursor CURSOR FOR
 		SELECT [tableschema], [tablename]
 		FROM #UserTables
-		WHERE tablename NOT IN ('df_ChangeTracking', 'dr_DeltaVersion')
+		WHERE tablename NOT IN ('df_ChangeTracking', 'df_ChangeTrackingColumns', 'dr_DeltaVersion')
 			AND tablename NOT LIKE '%__backup'
 
 	OPEN UserTable_Cursor
@@ -262,14 +289,9 @@ AS
 	FETCH NEXT FROM UserTable_Cursor INTO @TableSchema, @TableName
 	WHILE (@@Fetch_Status = 0)
 	BEGIN
-			SET @columnNameList = STUFF((select ',[' + a.name + ']'
-					from sys.all_columns a
-					join sys.tables t on a.object_id = t.object_id 
-					where t.object_id = object_id('[' + @TableSchema + '].[' + @TableName + ']')
-						and EXISTS (SELECT 1 FROM sys.identity_columns WHERE object_id = t.object_id)
-					for xml path ('')
-					),1,1,'');
-			PRINT @columnNameList
+			SELECT TOP 1 @columnNameList = [Columns]
+			FROM dbo.df_ChangeTrackingColumns
+			WHERE [TABLESCHEMA] = @TableSchema and [TABLENAME] = @TableName
 
 			EXEC [dbo].[df_DeleteDataInChunks] @TableSchema, @TableName
 
@@ -316,7 +338,7 @@ AS
 		SELECT [table_schema], [table_name]
 		FROM information_schema.tables
 		WHERE table_type = 'BASE TABLE'
-			AND [table_name] NOT IN ('df_ChangeTracking', 'dr_DeltaVersion')
+			AND [table_name] NOT IN ('df_ChangeTracking', 'df_ChangeTrackingColumns', 'dr_DeltaVersion')
 			AND [table_name] NOT LIKE '%__backup'
 
 	OPEN Table_Cursor
