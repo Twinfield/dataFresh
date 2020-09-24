@@ -59,7 +59,7 @@ namespace DataFresh
 		public SqlDataFresh(string connectionString, bool verbose)
 		{
 			this.connectionString = connectionString;
-			this.verbose = verbose;
+			this.verbose = true;// verbose;
 		}
 
 		public bool TableExists(string tableName)
@@ -118,14 +118,15 @@ namespace DataFresh
 		public void RefreshTheDatabase()
 		{
 			DateTime before = DateTime.Now;
-			ConsoleWrite("RefreshTheDatabase Started");
+			var snapshotPathForRestore = GetSnapshotPathForRestore();
+			ConsoleWrite($"RefreshTheDatabase Started ({snapshotPathForRestore})");
 			if (!ProcedureExists(RefreshProcedureName))
 			{
 				throw new SqlDataFreshException("DataFresh procedure not found. Please prepare the database.");
 			}
 
-			ExecuteNonQuery(string.Format("exec {0} '{1}'", RefreshProcedureName, GetSnapshotPathForRestore()));
-			ConsoleWrite("RefreshTheDatabase Complete : " + (DateTime.Now - before));
+			ExecuteNonQuery($"exec {RefreshProcedureName} '{snapshotPathForRestore}'");
+			ConsoleWrite($"RefreshTheDatabase Complete {snapshotPathForRestore} : {DateTime.Now - before}");
 		}
 
 		string GetSnapshotPathForRestore()
@@ -156,13 +157,14 @@ namespace DataFresh
 		public void RefreshTheEntireDatabase()
 		{
 			DateTime before = DateTime.Now;
-			ConsoleWrite("RefreshTheEntireDatabase Started");
+			var snapshotPathForRestore = GetSnapshotPathForRestore();
+			ConsoleWrite($"RefreshTheEntireDatabase Started {snapshotPathForRestore}");
 			if (!ProcedureExists(ImportProcedureName))
 			{
 				throw new SqlDataFreshException("DataFresh procedure not found. Please prepare the database.");
 			}
-			ExecuteNonQuery(string.Format("exec {0} '{1}'", ImportProcedureName, GetSnapshotPathForRestore()));
-			ConsoleWrite("RefreshTheEntireDatabase Complete : " + (DateTime.Now - before));
+			ExecuteNonQuery($"exec {ImportProcedureName} '{snapshotPathForRestore}'");
+			ConsoleWrite($"RefreshTheEntireDatabase Complete ({snapshotPathForRestore}) : {DateTime.Now - before}");
 		}
 
 		void ExecuteCmd(string command)
@@ -181,7 +183,6 @@ namespace DataFresh
 
 		sealed class TableMetadata
 		{
-			public string Database { get; set; }
 			public string Schema { get; set; }
 			public string Name { get; set; }
 		}
@@ -192,17 +193,19 @@ namespace DataFresh
 		public void CreateSnapshot()
 		{
 			var before = DateTime.Now;
-			ConsoleWrite("CreateSnapshot Started");
+			var snapshotPathForBackup = GetSnapshotPathForBackup();
+			ConsoleWrite($"CreateSnapshot Started ({snapshotPathForBackup})");
 			if (!ProcedureExists(RefreshProcedureName))
 			{
 				throw new SqlDataFreshException("DataFresh procedure not found. Please prepare the database.");
 			}
+			Directory.CreateDirectory(snapshotPathForBackup);
 
-			var sql = "SELECT DB_NAME(), TABLE_SCHEMA, TABLE_NAME FROM Information_Schema.tables WHERE table_type = 'BASE TABLE'";
+			var sql = "SELECT TABLE_SCHEMA, TABLE_NAME FROM Information_Schema.tables WHERE table_type = 'BASE TABLE'";
 			var tables = new List<TableMetadata>();
 			using (var conn = new SqlConnection(connectionString))
 			{
-				sql = sql + " --dataProfilerIgnore";
+				sql += " --dataProfilerIgnore";
 				var cmd = new SqlCommand(sql, conn) { CommandTimeout = 1200 };
 				conn.Open();
 				using (var reader = cmd.ExecuteReader())
@@ -211,16 +214,13 @@ namespace DataFresh
 					{
 						tables.Add(new TableMetadata
 						{
-							Database = reader.GetString(0),
-							Schema = reader.GetString(1),
-							Name = reader.GetString(2)
+							Schema = reader.GetString(0),
+							Name = reader.GetString(1)
 						});
 					}
 				}
 			}
 
-			var snapshotPathForBackup = GetSnapshotPathForBackup();
-			Directory.CreateDirectory(snapshotPathForBackup);
 			var connectionBuilder = new SqlConnectionStringBuilder(connectionString);
 			var commandBuilder = new StringBuilder();
 
@@ -231,7 +231,7 @@ namespace DataFresh
 				foreach (var table in batch)
 				{
 					commandBuilder.Append("bcp \"");
-					commandBuilder.Append(table.Database);
+					commandBuilder.Append(connectionBuilder.InitialCatalog);
 					commandBuilder.Append(".[");
 					commandBuilder.Append(table.Schema);
 					commandBuilder.Append("].[");
@@ -244,7 +244,10 @@ namespace DataFresh
 					commandBuilder.Append(table.Name);
 					commandBuilder.Append(".df\" -n -k -E -C 1252 -S ");
 					commandBuilder.Append(connectionBuilder.DataSource);
-					commandBuilder.Append(" -T");
+					commandBuilder.Append(" -U ");
+					commandBuilder.Append(connectionBuilder.UserID);
+					commandBuilder.Append(" -P ");
+					commandBuilder.Append(connectionBuilder.Password);
 					commandBuilder.Append(" && ");
 				}
 				commandBuilder.Append("REM");
@@ -252,7 +255,7 @@ namespace DataFresh
 				commandBuilder.Clear();
 			}
 
-			ConsoleWrite("CreateSnapshot Complete : " + (DateTime.Now - before));
+			ConsoleWrite($"CreateSnapshot Complete ({snapshotPathForBackup}) : {DateTime.Now - before}");
 		}
 
 		/// <summary>
