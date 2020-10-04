@@ -238,7 +238,7 @@ FROM
 				var batch = changedTables.Skip(i).Take(batchSize);
 				foreach (var t in batch)
 				{
-					stringBuilder.Append($"bcp \"{cb.InitialCatalog}.[{t.Schema}].[{t.Name}]\" ${operation} \"{snapshotPath}{t.Schema}.{t.Name}.df\"" +
+					stringBuilder.Append($"bcp \"{cb.InitialCatalog}.[{t.Schema}].[{t.Name}]\" {operation} \"{snapshotPath}{t.Schema}.{t.Name}.df\"" +
 						$" -n -k -E -C 1252 -S {cb.DataSource} -U {cb.UserID} -P {cb.Password} && ");
 				}
 				stringBuilder.Append("REM");
