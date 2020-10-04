@@ -122,20 +122,18 @@ namespace DataFresh
 				throw new SqlDataFreshException($"DataFresh procedure ({PrepareProcedureName}) not found. Please prepare the database.");
 
 			const string changedAndReferencedTablesSql = @"
-SELECT DB_NAME(), [tableschema], [tablename] from df_ChangeTracking
+SELECT [tableschema], [tablename] from df_ChangeTracking
 UNION
 SELECT DISTINCT
-		DB_NAME(),
       OBJECT_SCHEMA_NAME(fkeyid) AS Referenced_Table_Schema,
       OBJECT_NAME(fkeyid) AS Referenced_Table_Name
 FROM 
    sysreferences sr
    INNER JOIN df_ChangeTracking ct ON sr.rkeyid = OBJECT_ID(ct.tablename)
 ";
-			const string changedTablesSql = "SELECT DB_NAME(), [tableschema], [tablename] FROM df_ChangeTracking WHERE tablename not in('df_ChangeTracking', 'dr_DeltaVersion')";
-			var commandBuilder = new StringBuilder();
+			const string changedTablesSql = "SELECT [tableschema], [tablename] FROM df_ChangeTracking WHERE tablename not in('df_ChangeTracking', 'dr_DeltaVersion')";
 			var snapshotPath = GetSnapshotPath();
-			var connectionBuilder = new SqlConnectionStringBuilder(connectionString);
+			var cb = new SqlConnectionStringBuilder(connectionString);
 			using (var conn = new SqlConnection(connectionString))
 			{
 				conn.Open();
@@ -146,28 +144,17 @@ FROM
 				foreach (var table in changedAndReferencedTables)
 					ExecuteNonQuery($"Alter Table [{table.Schema}].[{table.Name}] NOCHECK CONSTRAINT ALL", conn);
 
-				const int batchSize = 20;
-				for (var i = 0; i < changedTables.Count; i += batchSize)
+				foreach (var t in changedTables)
 				{
-					var batch = changedTables.Skip(i).Take(batchSize);
-					foreach (var t in batch)
-					{
-						commandBuilder.Append($"bcp \"{t.Database}.[{t.Schema}].[{t.Name}]\"" +
-							$" in \"{snapshotPath}{t.Schema}.{t.Name}.df\"" +
-							$" -n -k -E -C 1252 -S {connectionBuilder.DataSource} -T &&");
+					var sql = $"DELETE [{t.Schema}].[{t.Name}]; DELETE FROM df_ChangeTracking WHERE TableName='{t.Name}' and TableSchema='{t.Schema}'";
+					ExecuteNonQuery(sql, conn);
 
-						var sql = $"DELETE [{t.Schema}].[{t.Name}]; DELETE FROM df_ChangeTracking WHERE TableName='{t.Name}' and TableSchema='{t.Schema}'";
-						ExecuteNonQuery(sql, conn);
-
-						sql = $"IF (SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE table_schema = '{t.Schema}' AND table_name = '{t.Name}' AND IDENT_SEED(TABLE_NAME) IS NOT NULL) > 0 " +
-							$"BEGIN DBCC CHECKIDENT([{t.Schema}.{t.Name}], RESEED, 0) END";
-						ExecuteNonQuery(sql, conn);
-					}
-
-					commandBuilder.Append("REM");
-					ExecuteCmd(commandBuilder.ToString());
-					commandBuilder.Clear();
+					sql = $"IF (SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE table_schema = '{t.Schema}' AND table_name = '{t.Name}' AND IDENT_SEED(TABLE_NAME) IS NOT NULL) > 0 " +
+						$"BEGIN DBCC CHECKIDENT([{t.Schema}.{t.Name}], RESEED, 0) END";
+					ExecuteNonQuery(sql, conn);
 				}
+
+				BcpTables(changedTables, cb, snapshotPath, inOperation: true);
 
 				foreach (var table in changedAndReferencedTables)
 					ExecuteNonQuery($"Alter Table [{table.Schema}].[{table.Name}] CHECK CONSTRAINT ALL", conn);
@@ -186,9 +173,8 @@ FROM
 				{
 					tables.Add(new TableMetadata
 					{
-						Database = reader.GetString(0),
-						Schema = reader.GetString(1),
-						Name = reader.GetString(2)
+						Schema = reader.GetString(0),
+						Name = reader.GetString(1)
 					});
 				}
 			}
@@ -205,42 +191,71 @@ FROM
 			if (!ProcedureExists(PrepareProcedureName))
 				throw new SqlDataFreshException($"DataFresh procedure ({PrepareProcedureName}) not found. Please prepare the database.");
 
-			const string allTablesSql = @"SELECT DB_NAME(), Table_Schema as TableSchema, Table_Name as TableName FROM Information_Schema.tables WHERE table_type = 'BASE TABLE'";
-			const string changedTablesSql = "SELECT DB_NAME(), [tableschema], [tablename] FROM df_ChangeTracking WHERE tablename not in('df_ChangeTracking', 'dr_DeltaVersion')";
-			var commandBuilder = new StringBuilder();
+			const string allTablesSql = @"SELECT Table_Schema as TableSchema, Table_Name as TableName FROM Information_Schema.tables WHERE table_type = 'BASE TABLE'";
+			const string changedTablesSql = "SELECT [tableschema], [tablename] FROM df_ChangeTracking WHERE tablename not in('df_ChangeTracking', 'dr_DeltaVersion')";
 			var snapshotPath = GetSnapshotPath();
-			var connectionBuilder = new SqlConnectionStringBuilder(connectionString);
+			var cb = new SqlConnectionStringBuilder(connectionString);
 			using (var conn = new SqlConnection(connectionString))
 			{
 				conn.Open();
+				var before2 = DateTime.Now;
 				var allTables = SelectTables(allTablesSql, conn);
 				var changedTables = SelectTables(changedTablesSql, conn);
+				ConsoleWrite($"Restore tables selected: {DateTime.Now - before2}");
 
+				before2 = DateTime.Now;
 				foreach (var table in allTables)
 					ExecuteNonQuery($"Alter Table [{table.Schema}].[{table.Name}] NOCHECK CONSTRAINT ALL", conn);
+				ConsoleWrite($"Restore tables check disabled: {DateTime.Now - before2}");
 
-				const int batchSize = 20;
-				for (var i = 0; i < changedTables.Count; i += batchSize)
-				{
-					var batch = changedTables.Skip(i).Take(batchSize);
-					foreach (var t in batch)
-					{
-						commandBuilder.Append($"bcp \"{t.Database}.[{t.Schema}].[{t.Name}]\"" +
-							$" in \"{snapshotPath}{t.Schema}.{t.Name}.df\"" +
-							$" -n -k -E -C 1252 -S {connectionBuilder.DataSource} -T &&");
-						ExecuteNonQuery($"DELETE [{t.Schema}].[{t.Name}]", conn);
-					}
+				before2 = DateTime.Now;
+				foreach (var t in changedTables)
+					ExecuteNonQuery($"DELETE [{t.Schema}].[{t.Name}]", conn);
+				ConsoleWrite($"Restore tables deleted: {DateTime.Now - before2}");
 
-					commandBuilder.Append("REM");
-					ExecuteCmd(commandBuilder.ToString());
-					commandBuilder.Clear();
-				}
+				BcpTables(changedTables, cb, snapshotPath, inOperation: true);
 
+				before2 = DateTime.Now;
 				foreach (var table in allTables)
 					ExecuteNonQuery($"Alter Table [{table.Schema}].[{table.Name}] CHECK CONSTRAINT ALL", conn);
+				ConsoleWrite($"Restore tables altered back: {DateTime.Now - before2}");
 			}
 
 			ConsoleWrite("RefreshTheEntireDatabase Complete : " + (DateTime.Now - before));
+		}
+
+		void BcpTables(IReadOnlyCollection<TableMetadata> changedTables, SqlConnectionStringBuilder cb, string snapshotPath, bool inOperation)
+		{
+			const int batchSize = 100;
+			var before2 = DateTime.Now;
+			var before = DateTime.Now;
+			var commands = new List<string>();
+			var operation = inOperation ? "in" : "out";
+
+			var stringBuilder = new StringBuilder();
+			for (var i = 0; i < changedTables.Count; i += batchSize)
+			{
+				var batch = changedTables.Skip(i).Take(batchSize);
+				foreach (var t in batch)
+				{
+					stringBuilder.Append($"bcp \"{cb.InitialCatalog}.[{t.Schema}].[{t.Name}]\" ${operation} \"{snapshotPath}{t.Schema}.{t.Name}.df\"" +
+						$" -n -k -E -C 1252 -S {cb.DataSource} -U {cb.UserID} -P {cb.Password} && ");
+				}
+				stringBuilder.Append("REM");
+				commands.Add(stringBuilder.ToString());
+				stringBuilder.Clear();
+			}
+
+			ConsoleWrite($"Commands created: {DateTime.Now - before2}");
+
+			foreach (var command in commands.AsParallel())
+			{
+				var before1 = DateTime.Now;
+				ExecuteCmd(command);
+				ConsoleWrite($"Restore part complete: {DateTime.Now - before1}");
+			}
+
+			ConsoleWrite($"BCP complete: {DateTime.Now - before}");
 		}
 
 		static void ExecuteCmd(string command)
@@ -259,7 +274,6 @@ FROM
 
 		sealed class TableMetadata
 		{
-			public string Database { get; set; }
 			public string Schema { get; set; }
 			public string Name { get; set; }
 		}
@@ -274,7 +288,7 @@ FROM
 			if (!ProcedureExists(PrepareProcedureName))
 				throw new SqlDataFreshException($"DataFresh procedure ({PrepareProcedureName}) not found. Please prepare the database.");
 
-			var sql = "SELECT DB_NAME(), TABLE_SCHEMA, TABLE_NAME FROM Information_Schema.tables WHERE table_type = 'BASE TABLE'";
+			var sql = "SELECT TABLE_SCHEMA, TABLE_NAME FROM Information_Schema.tables WHERE table_type = 'BASE TABLE'";
 			var tables = new List<TableMetadata>();
 			using (var conn = new SqlConnection(connectionString))
 			{
@@ -287,9 +301,8 @@ FROM
 					{
 						tables.Add(new TableMetadata
 						{
-							Database = reader.GetString(0),
-							Schema = reader.GetString(1),
-							Name = reader.GetString(2)
+							Schema = reader.GetString(0),
+							Name = reader.GetString(1)
 						});
 					}
 				}
@@ -297,25 +310,11 @@ FROM
 
 			var snapshotPath = GetSnapshotPath();
 			Directory.CreateDirectory(snapshotPath);
-			var connectionBuilder = new SqlConnectionStringBuilder(connectionString);
-			var commandBuilder = new StringBuilder();
+			var cb = new SqlConnectionStringBuilder(connectionString);
 
-			const int batchSize = 20;
-			for (var i = 0; i < tables.Count; i += batchSize)
-			{
-				var batch = tables.Skip(i).Take(batchSize);
-				foreach (var t in batch)
-				{
-					commandBuilder.Append($"bcp \"{t.Database}.[{t.Schema}].[{t.Name}]\"" +
-						$" out \"{snapshotPath}{t.Schema}.{t.Name}.df\"" +
-						$" -n -k -E -C 1252 -S {connectionBuilder.DataSource} -T &&");
-				}
-				commandBuilder.Append("REM");
-				ExecuteCmd(commandBuilder.ToString());
-				commandBuilder.Clear();
-			}
+			BcpTables(tables, cb, snapshotPath, inOperation: false);
 
-			ConsoleWrite("CreateSnapshot Complete : " + (DateTime.Now - before));
+			ConsoleWrite($"CreateSnapshot Complete : {DateTime.Now - before}");
 		}
 
 		/// <summary>
