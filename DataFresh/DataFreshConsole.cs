@@ -18,22 +18,25 @@
 
 using System;
 using System.Collections.Specialized;
-using System.IO;
 using System.Text;
 
 namespace DataFresh
 {
 	public class DataFreshConsole
 	{
-		private StringBuilder results = new StringBuilder();
+		readonly StringBuilder results = new StringBuilder();
 
-		public NameValueCollection arguments = new NameValueCollection();
-		public string connectionString = string.Empty;
-
-		public string Results
+		public DataFreshConsole()
 		{
-			get { return results.ToString(); }
+			ConnectionString = string.Empty;
+			Arguments = new NameValueCollection();
 		}
+
+		public string Results => results.ToString();
+
+		public NameValueCollection Arguments { get; }
+
+		public string ConnectionString { get; set; }
 
 		public void Start(string[] args)
 		{
@@ -45,52 +48,28 @@ namespace DataFresh
 				return;
 			}
 
-			for (int i = 0; i < args.Length; i = i + 2)
-			{
-				this.arguments.Add(args[i].Replace("-", ""), args[i + 1]);
-				//ConsoleWrite(args[i] + ": " +args[i+1]);
-			}
+			for (var i = 0; i < args.Length; i += 2)
+				Arguments.Add(args[i].Replace("-", ""), args[i + 1]);
 
-			if (!CheckForRequiredArguments(this.arguments))
+			if (!CheckForRequiredArguments(Arguments))
 			{
 				return;
 			}
 
-			connectionString = string.Format(@"user id={0};password={1};Initial Catalog={2};Data Source={3};",
-			                                 this.arguments["u"],
-			                                 this.arguments["p"],
-			                                 this.arguments["d"],
-			                                 this.arguments["s"]);
+			ConnectionString =
+				$@"user id={Arguments["u"]};password={Arguments["p"]};Initial Catalog={Arguments["d"]};Data Source={Arguments["s"]};";
 
-			SqlDataFresh dataFresh = new SqlDataFresh(connectionString, true);
+			var dataFresh = new SqlDataFresh(ConnectionString, true);
 
-			string snapshotRootPath = this.arguments["sp"];
-
-			if (snapshotRootPath != null)
-			{
-				snapshotRootPath = snapshotRootPath.Replace("\"", "");
-				if (!snapshotRootPath.EndsWith(@"\")) snapshotRootPath += @"\";
-
-				ConsoleWrite("snapshotRootPath = {0}", snapshotRootPath);
-				var fullPath = Path.GetFullPath(snapshotRootPath);
-				ConsoleWrite("fullPath = {0}", fullPath);
-				dataFresh.SnapshotRootPath = snapshotRootPath;
-			}
-
-			string command = this.arguments["c"].ToUpper();
+			var command = Arguments["c"].ToUpper();
 			switch (command)
 			{
 				case "PREPARE":
-					bool ignoreSnapshot = false;
-					string ignoreSnapshotArgument = arguments["ignoresnapshot"];
-					if(ignoreSnapshotArgument != null)
-					{
-						if(ignoreSnapshotArgument == "1")
-						{
-							ignoreSnapshot = true;
-						}
-					}
-					dataFresh.PrepareDatabaseforDataFresh(!ignoreSnapshot);
+					var ignoreSnapshot = false;
+					var ignoreSnapshotArgument = Arguments["ignoresnapshot"];
+					if (ignoreSnapshotArgument != null && ignoreSnapshotArgument == "1")
+						ignoreSnapshot = true;
+					dataFresh.PrepareDatabaseForDataFresh(!ignoreSnapshot);
 					break;
 				case "REFRESH":
 					dataFresh.RefreshTheDatabase();
@@ -113,7 +92,7 @@ namespace DataFresh
 			}
 		}
 
-		private void ConsoleWrite(string message, params object[] args)
+		void ConsoleWrite(string message, params object[] args)
 		{
 			results.AppendFormat(message, args);
 			results.AppendFormat(Environment.NewLine);
@@ -121,27 +100,22 @@ namespace DataFresh
 			Console.Out.WriteLine(message, args);
 		}
 
-		private bool CheckForRequiredArguments(NameValueCollection myArgs)
+		bool CheckForRequiredArguments(NameValueCollection myArgs)
 		{
-			if (
-				myArgs == null ||
-					myArgs["c"] == null ||
-					myArgs["s"] == null ||
-					myArgs["d"] == null ||
-					myArgs["u"] == null ||
-					myArgs["p"] == null
-				)
-			{
-				ConsoleWrite("Missing required arguments.");
-				WriteUsage();
-				return false;
-			}
-			return true;
+			if (myArgs?["c"] != null
+				&& myArgs["s"] != null
+				&& myArgs["d"] != null
+				&& myArgs["u"] != null
+				&& myArgs["p"] != null) return true;
+
+			ConsoleWrite("Missing required arguments.");
+			WriteUsage();
+			return false;
 		}
 
-		private void WriteUsage()
+		void WriteUsage()
 		{
-			string usageText = @"
+			const string usageText = @"
 Usage:
 
   DataFreshUtil.exe 
@@ -153,7 +127,6 @@ Usage:
 
 Options:
 
-  -sp             specify path on server where snapshot files are located
   -ignoresnapshot 1: ignore snapshot during prepare
                   0: (default) will create snapshot
 
@@ -171,7 +144,7 @@ Commands:
 
 		public static DataFreshConsole Execute(string command, string username, string password, string server, string database, params string[] options)
 		{
-			string[] args = new string[]
+			var args = new[]
 				{
 					"-c", command,
 					"-u", username,
@@ -182,12 +155,12 @@ Commands:
 
 			if (options != null && options.Length > 1)
 			{
-				string argsString = string.Join("|", args);
-				string optionsString = string.Join("|", options);
+				var argsString = string.Join("|", args);
+				var optionsString = string.Join("|", options);
 				args = string.Format(argsString + "|" + optionsString).Split('|');
 			}
 
-			DataFreshConsole console = new DataFreshConsole();
+			var console = new DataFreshConsole();
 			console.Start(args);
 			return console;
 		}
