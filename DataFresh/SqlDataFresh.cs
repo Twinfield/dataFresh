@@ -19,6 +19,9 @@
 using System;
 using System.Collections.Generic;
 using System.Data.SqlClient;
+using System.Diagnostics;
+using System.Linq;
+using System.Text;
 
 namespace DataFresh
 {
@@ -40,15 +43,18 @@ namespace DataFresh
 		}
 
 		readonly bool verbose;
+		readonly string databaseName;
 
 		public SqlDataFresh(string connectionString)
 		{
 			this.connectionString = connectionString;
+			var connectionBuilder = new SqlConnectionStringBuilder(connectionString);
+			databaseName = connectionBuilder.InitialCatalog;
 		}
 
 		public SqlDataFresh(string connectionString, bool verbose)
+			: this(connectionString)
 		{
-			this.connectionString = connectionString;
 			this.verbose = verbose;
 		}
 
@@ -59,184 +65,139 @@ namespace DataFresh
 
 		public void PrepareDatabaseForDataFresh(bool createSnapshot)
 		{
-			var before = DateTime.Now;
-			var cb = new SqlConnectionStringBuilder(connectionString);
 			var mode = createSnapshot ? "(with snapshot creation)" : string.Empty;
-			ConsoleWrite($"PrepareDatabaseForDataFresh for {cb.InitialCatalog} started {mode}");
+			Execute($"Prepare database{mode}", () =>
+			{
+				PrepareDataFresh();
 
-			PrepareDataFresh();
-
-			if (createSnapshot)
-				CreateSnapshot();
-
-			ConsoleWrite($"PrepareDatabaseForDataFresh for {cb.InitialCatalog} complete: " + (DateTime.Now - before));
+				if (createSnapshot)
+					CreateSnapshot();
+			});
 		}
 
 		public void CreateSnapshot()
 		{
-			var before = DateTime.Now;
-			var cb = new SqlConnectionStringBuilder(connectionString);
-
-			ConsoleWrite($"CreateSnapshot for {cb.InitialCatalog} started");
 			GuardDatabaseIsPrepared();
-
-			var tables = GetAllUserTables();
-			PerformBulkBackup(tables, cb);
-
-			ConsoleWrite($"CreateSnapshot for {cb.InitialCatalog} complete: {DateTime.Now - before}");
+			Execute("Create snapshot", () =>
+			{
+				var allTables = GetAllTables();
+				PerformBulkBackup(allTables);
+			});
 		}
 
 		void PrepareDataFresh()
 		{
-			var tables = GetAllUserTables();
-
-			ExecuteNonQuery(@"
-				IF OBJECT_ID (N'[dbo].[df_ChangeTracking]', N'U') IS NOT NULL
-					DROP TABLE [dbo].[df_ChangeTracking]
-
-				CREATE TABLE [dbo].[df_ChangeTracking]
-				(
-					[TableSchema] SYSNAME,
-					[TableName] SYSNAME
-				)");
-
-			using (var connection = new SqlConnection(connectionString))
+			Execute("Prepare DataFresh", () =>
 			{
-				connection.Open();
-
-				foreach (var t in tables)
-				{
-					ExecuteNonQuery($@"
-						IF (OBJECT_ID(N'[{t.Schema}].[trig_df_ChangeTracking_{t.Name}]') IS NOT NULL)
-						BEGIN
-							DROP TRIGGER [{t.Schema}].[trig_df_ChangeTracking_{t.Name}]
-						END", connection);
-
-					ExecuteNonQuery($@"
-						CREATE TRIGGER [{t.Schema}].[trig_df_ChangeTracking_{t.Name}] on [{t.Schema}].[{t.Name}]
-							FOR INSERT, UPDATE, DELETE
-						AS
-							SET NOCOUNT ON
-							INSERT INTO df_ChangeTracking(TableSchema, TableName)
-								VALUES('{t.Schema}', '{t.Name}')
-							SET NOCOUNT OFF
-						", connection);
-				}
-			}
-		}
-
-		void RemoveDataFresh()
-		{
-			var tables = GetAllUserTables();
-
-			using (var connection = new SqlConnection(connectionString))
-			{
-				connection.Open();
-
-				foreach (var t in tables)
-				{
-					var sql = $@"
-						IF (OBJECT_ID(N'[{t.Schema}].[trig_df_ChangeTracking_{t.Name}]') IS NOT NULL)
-						BEGIN
-							DROP TRIGGER [{t.Schema}].[trig_df_ChangeTracking_{t.Name}]
-						END
-
-						IF OBJECT_ID (N'[{t.Schema}].[{t.Name}{SnapshotTableSuffix}]', N'U') IS NOT NULL
-						BEGIN
-							DROP TABLE [{t.Schema}].[{t.Name}{SnapshotTableSuffix}];
-						END
-					";
-
-					ExecuteNonQuery(sql, connection);
-				}
+				var allTables = GetAllTables();
 
 				ExecuteNonQuery(@"
-					IF OBJECT_ID (N'[dbo].[df_ChangeTracking]', N'U') IS NOT NULL
+					IF OBJECT_ID(N'[dbo].[df_ChangeTracking]', N'U') IS NOT NULL
+					BEGIN
 						DROP TABLE [dbo].[df_ChangeTracking]
-				", connection);
-			}
+					END;
+
+					CREATE TABLE [dbo].[df_ChangeTracking] ([TableSchema] SYSNAME, [TableName] SYSNAME)"
+				);
+
+				ExecuteForEach(allTables, t => $@"
+					IF OBJECT_ID(N'[{t.Schema}].[trig_df_ChangeTracking_{t.Name}]') IS NOT NULL
+					BEGIN
+						DROP TRIGGER [{t.Schema}].[trig_df_ChangeTracking_{t.Name}]
+					END;
+					
+					EXEC (N'CREATE TRIGGER [{t.Schema}].[trig_df_ChangeTracking_{t.Name}] ON [{t.Schema}].[{t.Name}]
+					FOR INSERT, UPDATE, DELETE
+					AS
+					SET NOCOUNT ON
+					INSERT INTO df_ChangeTracking (TableSchema, TableName) VALUES (''{t.Schema}'', ''{t.Name}'')
+					SET NOCOUNT OFF');"
+				);
+			});
 		}
 
 		public void RemoveDataFreshFromDatabase()
 		{
-			var before = DateTime.Now;
-			var cb = new SqlConnectionStringBuilder(connectionString);
-			ConsoleWrite($"RemoveDataFreshFromDatabase for {cb.InitialCatalog} started");
-			RemoveDataFresh();
-			ConsoleWrite($"RemoveDataFreshFromDatabase for {cb.InitialCatalog} complete: " + (DateTime.Now - before));
+			Execute("Remove DataFresh", () =>
+			{
+				var allTables = GetAllTables();
+
+				ExecuteForEach(allTables, t => $@"
+					IF (OBJECT_ID(N'[{t.Schema}].[trig_df_ChangeTracking_{t.Name}]') IS NOT NULL)
+					BEGIN
+						DROP TRIGGER [{t.Schema}].[trig_df_ChangeTracking_{t.Name}]
+					END;
+
+					IF OBJECT_ID (N'[{t.Schema}].[{t.Name}{SnapshotTableSuffix}]', N'U') IS NOT NULL
+					BEGIN
+						DROP TABLE [{t.Schema}].[{t.Name}{SnapshotTableSuffix}];
+					END;"
+				);
+
+				ExecuteNonQuery(@"
+					IF OBJECT_ID (N'[dbo].[df_ChangeTracking]', N'U') IS NOT NULL
+						DROP TABLE [dbo].[df_ChangeTracking]"
+				);
+			});
 		}
 
 		public void RefreshTheDatabase()
 		{
-			var before = DateTime.Now;
-			var cb = new SqlConnectionStringBuilder(connectionString);
-			ConsoleWrite($"RefreshTheDatabase for {cb.InitialCatalog} started");
 			GuardDatabaseIsPrepared();
-
-			var changedAndReferencedTables = GetChangedAndReferencedUserTables();
-			var changedTables = GetChangedUserTables();
-
-			using (var conn = new SqlConnection(connectionString))
+			Execute("Refresh", () =>
 			{
-				conn.Open();
+				var changedAndReferencedTables = GetChangedAndReferencedTables();
+				var changedTables = GetChangedTables();
 
-				ExecuteNonQuery("TRUNCATE TABLE df_ChangeTracking", conn);
+				ExecuteNonQuery($"TRUNCATE TABLE [dbo].[{ChangeTrackingTableName}]");
 
-				foreach (var table in changedAndReferencedTables)
-					ExecuteNonQuery($"ALTER TABLE [{table.Schema}].[{table.Name}] NOCHECK CONSTRAINT ALL", conn);
+				ExecuteForEach(changedAndReferencedTables, t =>
+					$"ALTER TABLE [{t.Schema}].[{t.Name}] NOCHECK CONSTRAINT ALL;"
+				);
 
-				foreach (var t in changedTables)
-				{
-					var sql = $@"
-						DELETE [{t.Schema}].[{t.Name}];
-						DELETE FROM df_ChangeTracking WHERE TableName='{t.Name}' and TableSchema='{t.Schema}';
+				ExecuteForEach(changedTables, t => $@"
+					DELETE [{t.Schema}].[{t.Name}];
+					DELETE FROM df_ChangeTracking WHERE TableName='{t.Name}' and TableSchema='{t.Schema}';
 
-						IF (SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES
-							WHERE table_schema = '{t.Schema}'
-								AND table_name = '{t.Name}' 
-								AND IDENT_SEED(TABLE_NAME) IS NOT NULL) > 0 
-						BEGIN
-								DBCC CHECKIDENT([{t.Schema}.{t.Name}], RESEED, 0)
-						END";
-					ExecuteNonQuery(sql, conn);
-				}
+					IF (SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES
+						WHERE table_schema = '{t.Schema}' AND table_name = '{t.Name}'
+						AND IDENT_SEED(TABLE_NAME) IS NOT NULL) > 0
+					BEGIN
+						DBCC CHECKIDENT([{t.Schema}.{t.Name}], RESEED, 0)
+					END"
+				);
 
-				PerformBulkRestore(changedTables, cb);
+				PerformBulkRestore(changedTables);
 
-				foreach (var table in changedAndReferencedTables)
-					ExecuteNonQuery($"ALTER TABLE [{table.Schema}].[{table.Name}] CHECK CONSTRAINT ALL", conn);
-			}
-
-			ConsoleWrite($"RefreshTheDatabase for {cb.InitialCatalog} complete: " + (DateTime.Now - before));
+				ExecuteForEach(changedAndReferencedTables, t =>
+					$"ALTER TABLE [{t.Schema}].[{t.Name}] CHECK CONSTRAINT ALL;"
+				);
+			});
 		}
 
 		public void RefreshTheEntireDatabase()
 		{
-			var cb = new SqlConnectionStringBuilder(connectionString);
-			var before = DateTime.Now;
-			ConsoleWrite($"RefreshTheEntireDatabase for ({cb.InitialCatalog}) Started");
 			GuardDatabaseIsPrepared();
-
-			var allTables = GetAllUserTables();
-			var changedTables = GetChangedUserTables();
-
-			using (var conn = new SqlConnection(connectionString))
+			Execute("Refresh (entire)", () =>
 			{
-				conn.Open();
+				var allTables = GetAllTables();
+				var changedTables = GetChangedTables();
+				ExecuteNonQuery($"TRUNCATE TABLE [dbo].[{ChangeTrackingTableName}]");
 
-				foreach (var table in allTables)
-					ExecuteNonQuery($"ALTER TABLE [{table.Schema}].[{table.Name}] NOCHECK CONSTRAINT ALL", conn);
+				ExecuteForEach(allTables, t =>
+					$"ALTER TABLE [{t.Schema}].[{t.Name}] NOCHECK CONSTRAINT ALL;"
+				);
 
-				foreach (var table in changedTables)
-					ExecuteNonQuery($"DELETE [{table.Schema}].[{table.Name}]", conn);
+				ExecuteForEach(changedTables, t =>
+					$"DELETE FROM [{t.Schema}].[{t.Name}]"
+				);
 
-				PerformBulkRestore(changedTables, cb);
+				PerformBulkRestore(changedTables);
 
-				foreach (var table in allTables)
-					ExecuteNonQuery($"ALTER TABLE [{table.Schema}].[{table.Name}] CHECK CONSTRAINT ALL", conn);
-			}
-
-			ConsoleWrite($"RefreshTheEntireDatabase for ({cb.InitialCatalog}) complete: " + (DateTime.Now - before));
+				ExecuteForEach(allTables, t =>
+					$"ALTER TABLE [{t.Schema}].[{t.Name}] CHECK CONSTRAINT ALL;"
+				);
+			});
 		}
 
 		public bool HasDatabaseBeenModified()
@@ -250,40 +211,60 @@ namespace DataFresh
 			return ret > 0;
 		}
 
-		void PerformBulkBackup(TableMetadata[] tables, SqlConnectionStringBuilder cb)
+		public void RunStatements(IEnumerable<string> statements)
 		{
-			PerformBulkOperation(tables, cb, backup: true);
+			var cb = new StringBuilder();
+			const int maxLength = 6000;
+			var currentLength = 0;
+			foreach (var statement in statements)
+			{
+				if (currentLength + statement.Length > maxLength)
+					Flush();
+
+				currentLength += statement.Length;
+				cb.Append(statement);
+			}
+
+			if (currentLength > 0)
+				Flush();
+
+			void Flush()
+			{
+				ExecuteNonQuery(cb.ToString());
+				cb.Clear();
+				currentLength = 0;
+			}
 		}
 
-		void PerformBulkRestore(TableMetadata[] tables, SqlConnectionStringBuilder cb)
+		void PerformBulkBackup(IReadOnlyCollection<TableMetadata> tables)
 		{
-			PerformBulkOperation(tables, cb, backup: false);
+			PerformBulkOperation(tables, backup: true);
 		}
 
-		void PerformBulkOperation(TableMetadata[] tables, SqlConnectionStringBuilder cb, bool backup)
+		void PerformBulkRestore(IReadOnlyCollection<TableMetadata> tables)
 		{
-			var operation = backup ? "restore" : "backup";
-			ConsoleWrite($"Bulk {operation} started for {cb.InitialCatalog}");
+			PerformBulkOperation(tables, backup: false);
+		}
 
-			var before = DateTime.Now;
-
+		void PerformBulkOperation(IReadOnlyCollection<TableMetadata> tables, bool backup)
+		{
 			var destinationSuffix = backup ? SnapshotTableSuffix : string.Empty;
 			var sourceSuffix = backup ? string.Empty : SnapshotTableSuffix;
 
 			if (backup)
 			{
-				foreach (var table in tables)
+				ExecuteForEach(tables, t =>
 				{
-					var sourceTable = $"[{table.Schema}].[{table.Name}{sourceSuffix}]";
-					var destinationTable = $"[{table.Schema}].[{table.Name}{destinationSuffix}]";
+					var sourceTable = $"[{t.Schema}].[{t.Name}{sourceSuffix}]";
+					var destinationTable = $"[{t.Schema}].[{t.Name}{destinationSuffix}]";
 
-					var sql =
-						$"IF OBJECT_ID (N'{destinationTable}', N'U') IS NULL " +
-						$"BEGIN SELECT * INTO {destinationTable} FROM {sourceTable} WHERE 1=2 END " +
-						"ELSE " +
-						$"BEGIN TRUNCATE TABLE {destinationTable} END";
-					ExecuteNonQuery(sql);
-				}
+					return $@"
+						IF OBJECT_ID (N'{destinationTable}', N'U') IS NULL BEGIN
+							SELECT * INTO {destinationTable} FROM {sourceTable} WHERE 1=2 END 
+						ELSE BEGIN
+							TRUNCATE TABLE {destinationTable}
+						END;";
+				});
 			}
 
 			foreach (var table in tables)
@@ -291,10 +272,8 @@ namespace DataFresh
 				var sourceTable = $"[{table.Schema}].[{table.Name}{sourceSuffix}]";
 				var destinationTable = $"[{table.Schema}].[{table.Name}{destinationSuffix}]";
 
-				CopyTable(cb.ConnectionString, sourceTable, destinationTable);
+				CopyTable(connectionString, sourceTable, destinationTable);
 			}
-
-			ConsoleWrite($"Bulk {operation} complete for {cb.InitialCatalog}: {DateTime.Now - before}");
 		}
 
 		static void CopyTable(string dbConnectionString, string sourceTable, string destinationTable)
@@ -345,15 +324,10 @@ namespace DataFresh
 			using (var conn = new SqlConnection(connectionString))
 			{
 				conn.Open();
-				ExecuteNonQuery(sql, conn);
+				sql += " --dataProfilerIgnore";
+				using (var cmd = new SqlCommand(sql, conn) { CommandTimeout = 1200 })
+					cmd.ExecuteNonQuery();
 			}
-		}
-
-		static void ExecuteNonQuery(string sql, SqlConnection conn)
-		{
-			sql += " --dataProfilerIgnore";
-			using (var cmd = new SqlCommand(sql, conn) { CommandTimeout = 1200 })
-				cmd.ExecuteNonQuery();
 		}
 
 		void ConsoleWrite(string message)
@@ -362,10 +336,30 @@ namespace DataFresh
 				Console.Out.WriteLine(message);
 		}
 
-		static TableMetadata[] SelectTables(string sql, string connectionString)
+		void Execute(string actionName, Action action)
+		{
+			var stopWatch = new Stopwatch();
+			ConsoleWrite($"{actionName} for {databaseName} started");
+			stopWatch.Start();
+			try
+			{
+				action();
+			}
+			finally
+			{
+				stopWatch.Stop();
+				ConsoleWrite($"{actionName} for {databaseName} complete: {stopWatch.Elapsed}");
+			}
+		}
+
+		void ExecuteForEach(IEnumerable<TableMetadata> tables, Func<TableMetadata, string> func)
+		{
+			RunStatements(tables.Select(func));
+		}
+
+		IReadOnlyCollection<TableMetadata> SelectTables(string sql)
 		{
 			var tables = new List<TableMetadata>();
-
 			using (var conn = new SqlConnection(connectionString))
 			{
 				conn.Open();
@@ -382,7 +376,7 @@ namespace DataFresh
 					}
 				}
 			}
-			return tables.ToArray();
+			return tables;
 		}
 
 		void GuardDatabaseIsPrepared()
@@ -392,36 +386,37 @@ namespace DataFresh
 					$"DataFresh table ({ChangeTrackingTableName}) not found. Please prepare the database.");
 		}
 
-		TableMetadata[] GetAllUserTables()
+		IReadOnlyCollection<TableMetadata> GetAllTables()
 		{
 			var sql =
-				$@"SELECT table_schema, table_name 
-				FROM Information_Schema.tables 
-				WHERE table_type = 'BASE TABLE' 
+				$@"SELECT table_schema, table_name
+				FROM Information_Schema.tables
+				WHERE table_type = 'BASE TABLE'
+					AND table_name NOT IN ('df_ChangeTracking', 'dr_DeltaVersion')
 					AND table_name NOT LIKE '%{SnapshotTableSuffix}'";
 
-			var tables = SelectTables(sql, connectionString);
+			var tables = SelectTables(sql);
 			return tables;
 		}
 
-		TableMetadata[] GetChangedUserTables()
+		IReadOnlyCollection<TableMetadata> GetChangedTables()
 		{
 			var sql =
-				$@"SELECT DISTINCT TableSchema, TableName 
-				FROM df_ChangeTracking 
+				$@"SELECT DISTINCT TableSchema, TableName
+				FROM df_ChangeTracking
 				WHERE TableName NOT IN ('df_ChangeTracking', 'dr_DeltaVersion')
 				AND TableName NOT LIKE '%{SnapshotTableSuffix}'";
 
-			var tables = SelectTables(sql, connectionString);
+			var tables = SelectTables(sql);
 			return tables;
 		}
 
-		TableMetadata[] GetChangedAndReferencedUserTables()
+		IReadOnlyCollection<TableMetadata> GetChangedAndReferencedTables()
 		{
 			var sql = $@"
 				SELECT DISTINCT x.TableSchema, x.TableName
 				FROM (
-					SELECT DISTINCT TableSchema, TableName 
+					SELECT DISTINCT TableSchema, TableName
 					FROM df_ChangeTracking 
 					UNION
 					SELECT DISTINCT
@@ -434,7 +429,7 @@ namespace DataFresh
 					AND x.TableName NOT LIKE '%{SnapshotTableSuffix}'
 			";
 
-			var tables = SelectTables(sql, connectionString);
+			var tables = SelectTables(sql);
 			return tables;
 		}
 

@@ -65,10 +65,8 @@ namespace DataFresh
 			switch (command)
 			{
 				case "PREPARE":
-					var ignoreSnapshot = false;
 					var ignoreSnapshotArgument = Arguments["ignoresnapshot"];
-					if (ignoreSnapshotArgument != null && ignoreSnapshotArgument == "1")
-						ignoreSnapshot = true;
+					var ignoreSnapshot = (ignoreSnapshotArgument != null && ignoreSnapshotArgument == "1");
 					dataFresh.PrepareDatabaseForDataFresh(!ignoreSnapshot);
 					break;
 				case "REFRESH":
